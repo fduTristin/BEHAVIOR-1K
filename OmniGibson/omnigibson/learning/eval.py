@@ -43,6 +43,7 @@ from omnigibson.utils.python_utils import recursively_convert_to_torch
 from pathlib import Path
 from signal import signal, SIGINT
 from typing import Any, Tuple, List
+from datetime import datetime
 
 m = create_module_macros(module_path=__file__)
 m.NUM_EVAL_EPISODES = 1
@@ -56,9 +57,26 @@ gm.USE_GPU_DYNAMICS = False
 gm.ENABLE_TRANSITION_RULES = True
 
 # create module logger
+log_dir = "/home/xhz/BEHAVIOR-1K/logging"
+os.makedirs(log_dir, exist_ok=True)  # 如果目录不存在则创建
+
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_filename = f"{current_time}.log"
+log_path = os.path.join(log_dir, log_filename)
+
 logger = logging.getLogger("evaluator")
 logger.setLevel(20)  # info
 
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+file_handler = logging.FileHandler(log_path, encoding='utf-8')
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+logger.addHandler(file_handler)
+logger.info(f"实验启动。日志已记录至: {log_path}")
 
 class Evaluator:
     """
