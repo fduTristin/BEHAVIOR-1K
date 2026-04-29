@@ -1,3 +1,4 @@
+import logging
 import datasets
 import json
 import os
@@ -319,6 +320,27 @@ class BehaviorLeRobotDataset(LeRobotDataset):
         item = self.hf_dataset[self.current_streaming_frame_idx]
         ep_idx = item["episode_index"].item()
 
+        global_frame_start, global_frame_end, local_frame_start = self.chunks[self.current_streaming_chunk_idx]
+        local_frame_idx = self.current_streaming_frame_idx - global_frame_start + local_frame_start
+
+        valid_start, valid_end = self.meta.get_valid_duration(ep_idx)
+        if local_frame_idx < valid_start:
+
+            local_frame_end = local_frame_start + global_frame_end - global_frame_start
+            if local_frame_end > valid_start:
+                self.current_streaming_frame_idx += valid_start - local_frame_idx
+                local_frame_idx = valid_start
+                # reload item
+                item = self.hf_dataset[self.current_streaming_frame_idx]
+    
+            else:
+                self.current_streaming_frame_idx = global_frame_end
+                return self.__getitem__(idx)
+
+        if local_frame_idx >= valid_end:
+            self.current_streaming_frame_idx = global_frame_end
+            return self.__getitem__(idx)
+
         if self._should_obs_loaders_reload:
             for loader in self.obs_loaders.values():
                 loader.close()
@@ -375,8 +397,6 @@ class BehaviorLeRobotDataset(LeRobotDataset):
         
         # Add annotations
         # current_skill_frame_duration: [global_frame_start, global_frame_end]
-        global_frame_start, _, local_frame_start = self.chunks[self.current_streaming_chunk_idx]
-        local_frame_idx = self.current_streaming_frame_idx - global_frame_start + local_frame_start
 
         # Load vlm_dense_annotations for the current episode and find matching frame
         # annotation_path = self.meta.get_new_annotation_path(ep_idx)
@@ -400,7 +420,7 @@ class BehaviorLeRobotDataset(LeRobotDataset):
                 annotation_data = json.load(f)
             for skill in annotation_data.get("skill_annotation", []):
                 frame_start, frame_end = skill.get("frame_duration", [0, 0])
-                if frame_start <= local_frame_idx < frame_end:
+                if frame_start <= local_frame_idx <= frame_end:
                     subtask = skill.get("subtask")
                     break
         item["subtask"] = subtask
@@ -520,6 +540,7 @@ class BehaviorLerobotDatasetMetadata(LeRobotDatasetMetadata):
         self.task_to_task_index = {v: k for k, v in self.tasks.items()}
 
         self.episodes = self.load_episodes(self.root)
+        self.valid_durations = self.load_valid_durations(self.root, self.episodes)
         if self._version < packaging.version.parse("v2.1"):
             self.stats = self.load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
@@ -542,6 +563,28 @@ class BehaviorLerobotDatasetMetadata(LeRobotDatasetMetadata):
             for item in sorted(episodes, key=lambda x: x["episode_index"])
             if item["episode_index"] // 1e4 in self.tasks
         }
+
+    def load_valid_durations(self, local_dir: Path, episodes: dict) -> dict:
+        """Load valid_duration from annotation files for each episode."""
+        valid_durations = {}
+        for ep_index, ep_dict in episodes.items():
+            annotation_path = self.root / self.get_annotation_path(ep_index)
+            if annotation_path.exists():
+                with open(annotation_path, "r") as f:
+                    annotation_data = json.load(f)
+                meta_data = annotation_data.get("meta_data", {})
+                valid_duration = meta_data.get("valid_duration")
+                if valid_duration is not None:
+                    valid_durations[ep_index] = valid_duration
+                    continue
+            valid_durations[ep_index] = [0, ep_dict["length"]]
+        return valid_durations
+
+    def get_valid_duration(self, ep_index: int) -> tuple[int, int]:
+        """Get valid_duration for a specific episode."""
+        valid_duration = self.valid_durations.get(ep_index, [0, self.episodes[ep_index]["length"]])
+        logging.info(f"Valid duration for episode {ep_index}: {valid_duration}")
+        return valid_duration
 
     def load_stats(self, local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
         if not (local_dir / STATS_PATH).exists():
