@@ -222,8 +222,8 @@ class BehaviorLeRobotDataset(LeRobotDataset):
         fpaths = [str(self.meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
         # append metainfo and language annotations
         fpaths += [str(self.meta.get_metainfo_path(ep_idx)) for ep_idx in episodes]
-        # TODO: add this back once we have all the language annotations
-        # fpaths += [str(self.meta.get_annotation_path(ep_idx)) for ep_idx in episodes]
+        fpaths += [str(self.meta.get_annotation_path(ep_idx)) for ep_idx in episodes]
+        fpaths += [str(self.meta.get_new_annotation_path(ep_idx)) for ep_idx in episodes]
         if len(self.meta.video_keys) > 0:
             video_files = [
                 str(self.meta.get_video_file_path(ep_idx, vid_key))
@@ -372,6 +372,41 @@ class BehaviorLeRobotDataset(LeRobotDataset):
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
+        
+        # Add annotations
+        # current_skill_frame_duration: [global_frame_start, global_frame_end]
+        global_frame_start, _, local_frame_start = self.chunks[self.current_streaming_chunk_idx]
+        local_frame_idx = self.current_streaming_frame_idx - global_frame_start + local_frame_start
+
+        # Load vlm_dense_annotations for the current episode and find matching frame
+        # annotation_path = self.meta.get_new_annotation_path(ep_idx)
+        # vlm_annotation = None
+        # if annotation_path.exists():
+        #     with open(annotation_path, "r") as f:
+        #         annotation_data = json.load(f)
+        #     vlm_dense_annotations = annotation_data.get("vlm_dense_annotations", [])
+        #     for ann in vlm_dense_annotations:
+        #         if ann.get("frame_index") == local_frame_idx:
+        #             vlm_annotation = ann
+        #             break
+        # item["vlm_dense_annotation"] = vlm_annotation
+
+        # Load sub-task annotation for the current episode: find the skill whose frame_duration
+        # contains local_frame_idx, and return its "subtask" field (a string).
+        annotation_path = self.root / self.meta.get_subtask_annotation_path(ep_idx)
+        subtask = None
+        if annotation_path.exists():
+            with open(annotation_path, "r") as f:
+                annotation_data = json.load(f)
+            for skill in annotation_data.get("skill_annotation", []):
+                frame_start, frame_end = skill.get("frame_duration", [0, 0])
+                if frame_start <= local_frame_idx < frame_end:
+                    subtask = skill.get("subtask")
+                    break
+        item["subtask"] = subtask
+        if subtask is None:
+            print(f"No subtask found for episode {ep_idx} at frame {local_frame_idx}")
+
         self.current_streaming_frame_idx += 1
 
         return item
@@ -527,6 +562,16 @@ class BehaviorLerobotDatasetMetadata(LeRobotDatasetMetadata):
         fpath = self.annotation_path.format(episode_chunk=ep_chunk, episode_index=ep_index)
         return Path(fpath)
 
+    def get_new_annotation_path(self, ep_index: int) -> Path:
+        ep_chunk = self.get_episode_chunk(ep_index)
+        fpath = self.new_annotation_path.format(episode_chunk=ep_chunk, episode_index=ep_index)
+        return Path(fpath)
+
+    def get_subtask_annotation_path(self, ep_index: int) -> Path:
+        ep_chunk = self.get_episode_chunk(ep_index)
+        fpath = self.subtask_annotation_path.format(episode_chunk=ep_chunk, episode_index=ep_index)
+        return Path(fpath)
+
     def get_metainfo_path(self, ep_index: int) -> Path:
         ep_chunk = self.get_episode_chunk(ep_index)
         fpath = self.metainfo_path.format(episode_chunk=ep_chunk, episode_index=ep_index)
@@ -536,6 +581,16 @@ class BehaviorLerobotDatasetMetadata(LeRobotDatasetMetadata):
     def annotation_path(self) -> str | None:
         """Formattable string for the annotation files."""
         return self.info["annotation_path"]
+
+    @property
+    def new_annotation_path(self) -> str | None:
+        """Formattable string for the new annotation files."""
+        return self.info["new_annotation_path"]
+
+    @property
+    def subtask_annotation_path(self) -> str | None:
+        """Formattable string for the subtask annotation files."""
+        return self.info["subtask_annotation_path"]
 
     @property
     def metainfo_path(self) -> str | None:
