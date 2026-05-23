@@ -2,7 +2,7 @@ import logging
 import torch as th
 from omnigibson.learning.utils.array_tensor_utils import torch_to_numpy
 from omnigibson.learning.utils.network_utils import WebsocketClientPolicy
-from typing import Optional
+from typing import Any, Optional
 
 
 __all__ = [
@@ -54,10 +54,11 @@ class WebsocketPolicy:
         logging.info(f"Creating websocket client policy with host: {host}, port: {port}")
         self.policy = WebsocketClientPolicy(host=host, port=port)
 
-    def forward(self, obs: dict, *args, **kwargs) -> th.Tensor:
+    def forward(self, obs: dict, *args, **kwargs) -> tuple[th.Tensor, Any]:
         # convert observation to numpy
         obs = torch_to_numpy(obs)
-        return self.policy.act(obs).detach().cpu()
+        action, subtask = self.policy.act(obs)
+        return action.detach().cpu(), subtask
 
     def reset(self) -> None:
         self.policy.reset()

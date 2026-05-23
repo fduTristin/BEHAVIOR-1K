@@ -95,6 +95,7 @@ class Evaluator:
         self.n_success_trials = 0
         self.total_time = 0
         self.robot_action = dict()
+        self.subtask = None
 
         self.env = self.load_env(env_wrapper=self.cfg.env_wrapper)
         self.policy = self.load_policy()
@@ -218,7 +219,7 @@ class Evaluator:
             5. Invokes step callbacks for all registered metrics to update their state.
             6. Returns the termination and truncation status.
         """
-        self.robot_action = self.policy.forward(obs=self.obs)
+        self.robot_action, self.subtask = self.policy.forward(obs=self.obs)
 
         obs, _, terminated, truncated, info = self.env.step(self.robot_action, n_render_iterations=1)
         # process obs
@@ -353,8 +354,35 @@ class Evaluator:
             self.obs[ROBOT_CAMERA_NAMES["R1Pro"]["head"] + "::rgb"].numpy(),
             (448, 448),
         )
+
+        frame = np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb]), head_rgb])
+
+        # overlay subtask text as subtitle
+        if self.subtask:
+            h, w = frame.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.55
+            thickness = 1
+            (tw, th_text), _ = cv2.getTextSize(self.subtask, font, font_scale, thickness)
+            pad = 8
+            bar_h = th_text + 2 * pad
+            bar = np.zeros((bar_h, w, 4), dtype=np.uint8)
+            bar[:, :] = (0, 0, 0, 255)
+            cv2.rectangle(bar, (0, 0), (w, bar_h), (20, 20, 20, 255), -1)
+            cv2.putText(
+                bar,
+                self.subtask,
+                (pad, th_text + pad - 2),
+                font,
+                font_scale,
+                (255, 255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+            frame = np.vstack([frame, bar])
+
         write_video(
-            np.expand_dims(np.hstack([np.vstack([left_wrist_rgb, right_wrist_rgb]), head_rgb]), 0),
+            np.expand_dims(frame, 0),
             video_writer=self.video_writer,
             batch_size=1,
             mode="rgb",
@@ -473,9 +501,10 @@ if __name__ == "__main__":
                 done = False
                 if config.write_video:
                     video_name = str(video_path) + f"/{config.task.name}_{idx}_{epi}.mp4"
+                    bar_h = 36
                     evaluator.video_writer = create_video_writer(
                         fpath=video_name,
-                        resolution=(448, 672),
+                        resolution=(448 + bar_h, 672),
                     )
                 # run metric start callbacks
                 for metric in evaluator.metrics:

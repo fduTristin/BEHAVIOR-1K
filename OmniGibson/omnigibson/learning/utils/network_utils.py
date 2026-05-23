@@ -99,8 +99,9 @@ class WebsocketClientPolicy:
             raise RuntimeError(f"Error in inference server:\n{response}")
         action_dict = unpackb(response)
         action_np = deepcopy(action_dict["action"])
+        subtask = deepcopy(action_dict["subtask"])
         action = th.from_numpy(action_np).to(th.float32)
-        return action
+        return action, subtask
 
     def reset(self) -> None:
         data = self._packer.pack({"reset": True})
@@ -161,17 +162,19 @@ class WebsocketPolicyServer:
                 action = self._policy.act(obs)
                 infer_time = time.monotonic() - infer_time
 
-                action = {
-                    "action": action.cpu().numpy(),
+                act_tensor, subtask = action
+                response = {
+                    "action": act_tensor.cpu().numpy(),
+                    "subtask": subtask,
                 }
-                action["server_timing"] = {
+                response["server_timing"] = {
                     "infer_ms": infer_time * 1000,
                 }
                 if prev_total_time is not None:
                     # We can only record the last total time since we also want to include the send time.
-                    action["server_timing"]["prev_total_ms"] = prev_total_time * 1000
+                    response["server_timing"]["prev_total_ms"] = prev_total_time * 1000
 
-                await websocket.send(packer.pack(action))
+                await websocket.send(packer.pack(response))
                 prev_total_time = time.monotonic() - start_time
 
             except websockets.ConnectionClosed:
